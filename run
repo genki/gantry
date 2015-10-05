@@ -1,0 +1,75 @@
+#!/bin/sh
+GANTRY_START=$@
+ETCD=$ETCD_ENDPOINT/v2/keys
+SSL="--cacert $ETCD_CAFILE --cert $ETCD_CERTFILE --key $ETCD_KEYFILE"
+JQ_NODES='jq .node.nodes[].value -r'
+SRC=$GANTRY_TEMPLATE
+DST=$GANTRY_TARGET
+KEYS="ID Name Port IP Tags Attrs.machine Attrs.node"
+LS_PTN="{{ls\s\s*\/\([^\s]*\)\s\s*\([^}]*\)}}"
+BLOCKS=`grep -e "$LS_PTN" -o $SRC | sed -e "s/$LS_PTN/\1,\2/"`
+
+gen_conf(){
+  awk '
+    BEGIN{C=0;print "cat <<__GANTRY__"}
+    END{print "__GANTRY__"}
+    ($0 ~ /\{\{ls/){ flag=1; N=0 }
+    {
+      if(flag==1){
+        h[N++]=$0
+        if($0 ~ /\{\{end\}\}/){
+          flag=0
+          split(ENVIRON["LS_" ++C], list, "\n")
+          for(item in list){
+            for(j=1; j<N-1; ++j){
+              L=h[j]; gsub(/\$\{/, "${LS_" C "_" j "_", L); print L
+            }
+          }
+        }
+      }else{ gsub(/\$/, "\\$"); print $0 }
+    }
+  ' $SRC | sh > $DST
+  cat $DST | shasum | awk '{print $1}'
+}
+hash_set(){
+  eval "${1}_$2=\$$3" && export "${1}_$2"
+}
+hash_get(){
+  eval echo \${${1}_$2}
+}
+
+SERVICE_COUNT=0
+for BLOCK in $BLOCKS; do
+  SERVICE_COUNT=`expr $SERVICE_COUNT + 1`
+  S=`echo $BLOCK | awk -F , '{printf $1}'`
+  Q=`echo $BLOCK | awk -F , '{printf $2}'`
+  R=`curl -Ls $SSL $ETCD/$S?sorted=1|$JQ_NODES|jq -c "def all:1;select($Q)"`
+  hash_set LS $SERVICE_COUNT R
+  hash_set SERVICE_NAME $SERVICE_COUNT S
+  for I in $KEYS; do
+    VS=`echo $R | jq .$I -r`
+    V_COUNT=0
+    for V in $VS; do
+      V_COUNT=`expr $V_COUNT + 1`
+      K=`echo $I | sed -e "s/Attrs\.//g"`
+      hash_set LS ${SERVICE_COUNT}_${V_COUNT}_$K V
+    done
+  done
+done
+DIGEST=`gen_conf`
+echo "new $DST (digest=$DIGEST)"
+
+for I in `seq 1 $SERVICE_COUNT`; do
+  S=`hash_get SERVICE_NAME $I`
+  while :; do
+    curl -Ls $SSL $ETCD/$S?sorted=1&recursive=1&wait=1 >/dev/null
+    NEW_DIGEST=`gen_conf`
+    if [ "$DIGEST" != "$NEW_DIGEST" ]; then
+      $GANTRY_CHECK && $GANTRY_RELOAD
+      DIGEST=$NEW_DIGEST
+      echo "update $DST (digest=$DIGEST)"
+    fi
+  done &
+done
+
+$GANTRY_CHECK && exec $GANTRY_START
