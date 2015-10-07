@@ -7,7 +7,7 @@ docker hub: [s21g/gantry](https://hub.docker.com/r/s21g/gantry/)
 
 Prerequisites:
 
- * etcd container
+ * etcd cluster
  * registrator
 
 USAGE:
