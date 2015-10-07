@@ -1,89 +1,28 @@
 #!/bin/sh
 GANTRY_START=$@
-PARSJ=${PARSJ:='/gantry/parsrj.sh'}
-DUMPJ=${DUMPJ:='/gantry/unescj.sh'}
-CURL=${CURL:='curl'}
-ETCD=$ETCD_ENDPOINT/v2/keys
-SSL="--cacert $ETCD_CAFILE --cert $ETCD_CERTFILE --key $ETCD_KEYFILE"
 SRC=$GANTRY_TEMPLATE
 DST=$GANTRY_TARGET
-SHASUM=`(which sha1sum || which shasum || which md5um) | tail -n 1`
+ADDR=`echo $GANTRY_SERVER | awk -F : '{print $1" "$2}'`
 
-hash_set(){
-  eval "${1}_$2=\$$3" && export "${1}_$2"
+conf(){
+  NLINES=`wc -l $SRC | awk '{print $1}'`
+  cat $SRC | awk -v nlines=$NLINES -v arg=$1 '
+    BEGIN{printf "%s %s\n", nlines, arg}
+    {print $0}
+  ' | nc $ADDR | awk -v DST=$DST '
+    NR==1{print}
+    NR>=2{print > DST}
+  '
 }
-hash_get(){
-  eval echo \${${1}_$2}
-}
-gen_conf(){
-  # fetch values for each `ls` blocks
-  SERVICE_COUNT=0
-  for BLOCK in "$BLOCKS"; do
-    SERVICE_COUNT=`expr $SERVICE_COUNT + 1`
-    S=`echo $BLOCK | awk -F '--' '{printf $1}'`
-    Q=`echo $BLOCK | awk -F '--' '{printf $2}'`
-    if [ "$Q" = "*" ]; then Q=".*"; fi
-    NODES=`$CURL -Ls $SSL "$ETCD/$S?sorted=1" \
-      | $PARSJ | grep "\$\.node\.nodes\[[0-9]*\]\.value" \
-      | awk '{print $2}' | $DUMPJ `
-    for I in $Q; do
-      NODES=`echo "$NODES" | grep -E "$I" || cat /dev/null`
-    done
-    hash_set LS $SERVICE_COUNT NODES
-    hash_set SERVICE_NAME $SERVICE_COUNT S
-    N_COUNT=0
-    for NODE in $NODES; do
-      N_COUNT=`expr $N_COUNT + 1`
-      VS=`echo $NODE | $PARSJ | sed -E "s/ /='/" | sed -E "s/$/'/"`
-      for V in $VS; do
-        K=${SERVICE_COUNT}_$N_COUNT
-        V=`echo $V | sed "s/^$\.Attrs\./$./" \
-          | sed -E "s/^(..Tags)\[([0-9]+)\]/\1_\2/" \
-          | sed -E "s/^../export LS_${K}_/"`
-        eval $V
-      done
-    done
-  done
-  awk '
-    BEGIN{C=0;print "cat <<__GANTRY__"}
-    END{print "__GANTRY__"}
-    ($0 ~ /\{\{ls/){ flag=1; N=0 }
-    {
-      if(flag==1){
-        h[N++]=$0
-        if($0 ~ /\{\{end\}\}/){
-          flag=0
-          split(ENVIRON["LS_" ++C], list, "\n")
-          for(item in list){
-            for(j=1; j<N-1; ++j){
-              L=h[j]; gsub(/\$\{/, "${LS_" C "_" j "_", L); print L
-            }
-          }
-        }
-      }else{ gsub(/\$/, "\\$"); print $0 }
-    }
-  ' $SRC | sh > $DST
-  cat $DST | $SHASUM | awk '{print $1}'
-}
-
-# scan `ls` blocks from the template
-LS_PTN="\{\{ls +\/([^ ]+) +([^}]+)\}\}"
-BLOCKS=`grep -E "$LS_PTN" -o $SRC | sed -E "s/$LS_PTN/\1--\2/"`
-SUM=`gen_conf`
-echo "new $DST (sum=$SUM)"
-
-# watch events for each service
-for I in `seq 1 $SERVICE_COUNT`; do
-  S=`hash_get SERVICE_NAME $I`
-  while :; do
-    $CURL -Ls $SSL $ETCD/$S?sorted=1&recursive=1&wait=1 >/dev/null
-    NEW_SUM=`gen_conf`
-    if [ "$SUM" != "$NEW_SUM" ]; then
-      $GANTRY_CHECK && $GANTRY_RELOAD
-      SUM=$NEW_SUM
-      echo "update $DST (sum=$SUM)"
-    fi
-  done &
-done
-
+DIGEST=`conf fetch`
+echo "new $DST (digest=$DIGEST)"
+exit
+while :; do
+  NEW_DIGEST=`conf watch`
+  if [ "$DIGEST" != "$NEW_DIGEST" ]; then
+    $GANTRY_CHECK && $GANTRY_RELOAD
+    DIGEST=$NEW_DIGEST
+    echo "update $DST (digest=$DIGEST)"
+  fi
+done &
 $GANTRY_CHECK && exec $GANTRY_START

@@ -1,0 +1,146 @@
+#!/usr/bin/env ruby
+require "socket"
+require "uri"
+require "net/https"
+require "openssl"
+require "json"
+require "erb"
+require "digest/md5"
+require "thwait"
+
+class Gantry
+  def initialize(s)
+    @socket = s
+    @hdr = s.addr[2]
+    @tmpl = ''
+    @backends = []
+    @values = {}
+  end
+
+  def start
+    recv_tmpl
+    scan_backends
+    wait_etcd if @mode == 'watch'
+    fetch_etcd
+    gen_conf
+  end
+
+private
+  def info(msg) puts "#{@hdr}: #{msg}" end
+  def load_cert(path) OpenSSL::X509::Certificate.new open(path).read end
+  def load_key(path) OpenSSL::PKey.read open(path).read end
+
+  def recv_tmpl
+    nlines, @mode = @socket.gets.chomp.split ' ', 2
+    info "#{nlines} lines #{@mode} mode"
+    nlines.to_i.times{@tmpl << @socket.gets}
+    info "received template"
+  end
+
+  class Scanner
+    def initialize(tmpl, &block)
+      @block = block
+      ERB.new(tmpl,nil,'-').result binding
+    end
+    def backend(name) @block[name] end
+  end
+
+  def scan_backends
+    Scanner.new(@tmpl){|name| @backends << name}
+    info "found #{@backends.size} backend(s)"
+  end
+
+  def wait_etcd
+    threads = @backends.map do |name|
+      Thread.new do
+        begin
+          https.get "/v2/keys/#{name}?recursive=1&wait=1"
+        rescue Timeout::Error => e
+          info "[W] wait_etcd: #{e}. retry"
+          sleep 1
+          retry
+        rescue Exception => e
+          info "[E] wait_etcd: #{e}"
+          raise e
+        end
+      end
+    end
+    ThreadsWait.new(*threads).next_wait
+    threads.each(&:exit).each(&:join)
+    info "wait done"
+  end
+
+  def fetch_etcd
+    threads = @backends.map do |name|
+      Thread.new do
+        begin
+          res = https.get "/v2/keys/#{name}?sorted=1&recursive=1"
+          [name, res.body]
+        rescue Exception => e
+          info "[E] fetch_etcd: #{e}"
+          raise e
+        end
+      end
+    end
+    threads.each &:join
+    threads.each do |t|
+      name, body = t.value
+      @values[name] = body
+    end
+    info "all values are fetched"
+  end
+  
+  Service = Struct.new :key, :name, :ip, :port, :tags, :machine, :node
+
+  class Generator
+    def initialize(&block) @block = block end
+    def run(tmpl) ERB.new(tmpl,nil,'-').result binding end
+    def backend(name, &block)
+      @block[name].each do |n|
+        s = Service.new n["ID"], n["Name"], n["IP"], n["Port"],
+          n["Tags"], n["Attrs"]["machine"], n["Attrs"]["node"]
+        s.instance_eval &block
+      end
+    end
+  end
+
+  def gen_conf
+    conf = Generator.new do |name|
+      values = JSON.load @values[name]
+      nodes = values["node"]["nodes"]
+      nodes.map{|node| JSON.load node["value"]}
+    end.run @tmpl
+    @socket.puts Digest::MD5.hexdigest conf
+    @socket.puts conf
+  end
+
+  def https
+    etcd = URI(ENV['ETCD_ENDPOINT'])
+    c = Net::HTTP.new etcd.host, etcd.port
+  ensure
+    c.read_timeout = nil
+    c.use_ssl = true
+    c.ca_file = ENV['ETCD_CAFILE']
+    c.cert = load_cert ENV['ETCD_CERTFILE']
+    c.key = load_key ENV['ETCD_KEYFILE']
+    c.verify_mode = OpenSSL::SSL::VERIFY_PEER
+  end
+end
+
+tcp = TCPServer.open 6479
+puts "gantry server started"
+Signal.trap(:INT){exit}
+loop do
+  Thread.start tcp.accept do |s|       # save to dynamic variable
+    begin
+      hdr = s.addr[2]
+      puts "#{hdr} is connected"
+      Gantry.new(s).start
+      puts "#{hdr} is disconnected"
+    rescue Exception => e
+      STDERR.puts "[E] #{hdr} #{e}\n#{e.backtrace*"\n"}"
+    ensure
+      s.close
+    end
+  end
+end
