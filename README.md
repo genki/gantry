@@ -27,9 +27,11 @@ Then, run docker containers using with gantry like this:
 
 ```
 docker run --volumes-from gantry --link gantry \
+	--entrypoint /gantry/run \
   -e GANTRY_TEMPLATE=/etc/foo/foo.conf.tmpl \
   -e GANTRY_TARGET=/etc/foo/foo.conf \
-  <docker-image> <other options>
+  <other options> <docker-image> \
+	<real entrypoint command here>
 ```
 
 Gantry generate the config file from the template at the begining,
