@@ -106,9 +106,9 @@ private
 
   def gen_conf
     conf = Generator.new do |name|
-      values = JSON.load @values[name]
-      nodes = values["node"]["nodes"]
-      nodes.map{|node| JSON.load node["value"]}
+      values = JSON.load @values[name] rescue nil
+      nodes = values["node"]["nodes"] rescue nil
+      nodes.map{|node| JSON.load node["value"]} if nodes
     end.run @tmpl
     @socket.puts Digest::MD5.hexdigest conf
     @socket.puts conf
