@@ -18,10 +18,19 @@ conf(){
     NR>=2{print > DST}
   '
 }
+killsilent(){
+  kill $1 $2 2>/dev/null
+}
+killtree(){
+  local P=$1
+  PIDS=`ps -o ppid,pid | awk 'NR>1{print}' | grep "^$P\b" | awk '{print $2}'`
+  for I in $PIDS; do killtree $I; done
+  killsilent -QUIT $P
+}
 DIGEST=`conf fetch`
 while [ "$DIGEST" != '' ]; do
   NEW_DIGEST=`conf watch`
-  if [ "$NEW_DIGEST" = '' ]; then kill $PID; exit; fi
+  if [ "$NEW_DIGEST" = '' ]; then killsilent -TERM $PID; exit 1; fi
   if [ "$DIGEST" != "$NEW_DIGEST" ]; then
     if $GANTRY_CHECK && $GANTRY_RELOAD; then
       DIGEST=$NEW_DIGEST
@@ -32,10 +41,13 @@ while [ "$DIGEST" != '' ]; do
     fi
   fi
 done &
+WATCH_PID=$!
+trap "killtree $WATCH_PID" INT TERM
+echo $WATCH_PID
 if [ "$DIGEST" != '' ]; then
   echo "new $DST (digest=$DIGEST)"
-  $GANTRY_CHECK && exec $GANTRY_START
-  DIGEST=''
+  if $GANTRY_CHECK; then exec $GANTRY_START; fi
+  killsilent -TERM $PID
 else
   echo "failed to start"
   exit 1
