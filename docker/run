@@ -3,11 +3,15 @@ GANTRY_START=$@
 SRC=$GANTRY_TEMPLATE
 DST=$GANTRY_TARGET
 ADDR=`echo $GANTRY_PORT | awk -F'//' '{print $2}' | awk -F: '{print $1" "$2}'`
+PID=$$
 
 conf(){
   NLINES=`wc -l $SRC | awk '{print $1}'`
-  cat $SRC | awk -v nlines=$NLINES -v arg=$1 '
-    BEGIN{printf "%s %s\n", nlines, arg}
+  PARAMS=`env | grep "^GANTRY_"`
+  NPARAMS=`echo "$PARAMS" | wc -l | awk '{print $1}'`
+  (echo "$PARAMS"; cat $SRC) | \
+  awk -v nlines=$NLINES -v nparams=$NPARAMS -v arg=$1 '
+    BEGIN{printf "%s %s %s\n", nlines, nparams, arg}
     {print $0}
   ' | nc $ADDR | awk -v DST=$DST '
     NR==1{print}
@@ -15,13 +19,24 @@ conf(){
   '
 }
 DIGEST=`conf fetch`
-echo "new $DST (digest=$DIGEST)"
-while :; do
+while [ "$DIGEST" != '' ]; do
   NEW_DIGEST=`conf watch`
+  if [ "$NEW_DIGEST" = '' ]; then kill $PID; exit; fi
   if [ "$DIGEST" != "$NEW_DIGEST" ]; then
-    $GANTRY_CHECK && $GANTRY_RELOAD
-    DIGEST=$NEW_DIGEST
-    echo "update $DST (digest=$DIGEST)"
+    if $GANTRY_CHECK && $GANTRY_RELOAD; then
+      DIGEST=$NEW_DIGEST
+      echo "update $DST (digest=$DIGEST)"
+    else
+      echo "failed to reload (digest=$NEW_DIGEST)"
+      DIGEST=''
+    fi
   fi
 done &
-$GANTRY_CHECK && exec $GANTRY_START
+if [ "$DIGEST" != '' ]; then
+  echo "new $DST (digest=$DIGEST)"
+  $GANTRY_CHECK && exec $GANTRY_START
+  DIGEST=''
+else
+  echo "failed to start"
+  exit 1
+fi

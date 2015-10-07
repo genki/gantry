@@ -4,7 +4,7 @@ build:
 
 run: build
 	docker run --rm -it -p 6479:6479 \
-		--volumes-from etcd-n2 \
+		--volumes-from etcd-g2 \
 		-e ETCD_ENDPOINT=https://192.168.10.2:2379 \
   	-e ETCD_CAFILE=/certs/ca.crt \
   	-e ETCD_CERTFILE=/certs/client.crt \

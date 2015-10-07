@@ -15,6 +15,7 @@ class Gantry
     @tmpl = ''
     @backends = []
     @values = {}
+    @params = {}
   end
 
   def start
@@ -31,22 +32,32 @@ private
   def load_key(path) OpenSSL::PKey.read open(path).read end
 
   def recv_tmpl
-    nlines, @mode = @socket.gets.chomp.split ' ', 2
-    info "#{nlines} lines #{@mode} mode"
+    nlines, nparams, @mode = @socket.gets.chomp.split ' ', 3
+    info "#{nlines} line(s) #{nparams} param(s) #{@mode} mode"
+    nparams.to_i.times do
+      k,v = @socket.gets.chomp.split "=", 2
+      @params[k.sub(/^GANTRY_/, '').downcase] = v
+    end
     nlines.to_i.times{@tmpl << @socket.gets}
     info "received template"
   end
 
+  class Else
+    def initialize(cond) @cond end
+    def else(&block) block.call unless @cond end
+  end
+
   class Scanner
-    def initialize(tmpl, &block)
-      @block = block
+    def initialize(tmpl, params, &block)
+      @params, @block = params, block
       ERB.new(tmpl,nil,'-').result binding
     end
-    def backend(name) @block[name] end
+    def backend(name) @block[name]; Else.new true end
+    def param(key) @params[key] end
   end
 
   def scan_backends
-    Scanner.new(@tmpl){|name| @backends << name}
+    Scanner.new(@tmpl, @params){|name| @backends << name}
     info "found #{@backends.size} backend(s)"
   end
 
@@ -93,19 +104,22 @@ private
   Service = Struct.new :key, :name, :ip, :port, :tags, :machine, :node
 
   class Generator
-    def initialize(&block) @block = block end
+    def initialize(params, &block) @params, @block = params, block end
     def run(tmpl) ERB.new(tmpl,nil,'-').result binding end
+    def param(key) @params[key] end
     def backend(name, &block)
-      @block[name].each do |n|
+      backends = @block[name]
+      backends.each do |n|
         s = Service.new n["ID"], n["Name"], n["IP"], n["Port"],
           n["Tags"], n["Attrs"]["machine"], n["Attrs"]["node"]
         s.instance_eval &block
-      end
+      end if backends
+      Else.new backends && !backends.empty?
     end
   end
 
   def gen_conf
-    conf = Generator.new do |name|
+    conf = Generator.new @params do |name|
       values = JSON.load @values[name] rescue nil
       nodes = values["node"]["nodes"] rescue nil
       nodes.map{|node| JSON.load node["value"]} if nodes
@@ -129,9 +143,10 @@ end
 
 tcp = TCPServer.open 6479
 puts "gantry server started"
+at_exit{tcp.close}
 Signal.trap(:INT){exit}
 loop do
-  Thread.start tcp.accept do |s|       # save to dynamic variable
+  Thread.start tcp.accept do |s|
     begin
       hdr = s.addr[2]
       puts "#{hdr} is connected"

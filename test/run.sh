@@ -8,5 +8,6 @@ GANTRY_CHECK='echo check' \
 GANTRY_RELOAD='echo reloaded' \
 GANTRY_TARGET=./tmp/out.conf \
 GANTRY_TEMPLATE=./test/test.conf \
-./docker/run
+GANTRY_SERVER_NAMES="hello world" \
+./docker/run nc -l -p 1234
 #docker-machine ssh g2 "sudo -u root $ENVS ./gantry/run"
