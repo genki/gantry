@@ -2,7 +2,7 @@
 GANTRY_START=$@
 SRC=$GANTRY_TEMPLATE
 DST=$GANTRY_TARGET
-ADDR=`echo $GANTRY_SERVER | awk -F : '{print $1" "$2}'`
+ADDR=`echo $GANTRY_PORT | awk -F'//' '{print $2}' | awk -F: '{print $1" "$2}'`
 
 conf(){
   NLINES=`wc -l $SRC | awk '{print $1}'`
