@@ -16,7 +16,6 @@ conf(){
 }
 DIGEST=`conf fetch`
 echo "new $DST (digest=$DIGEST)"
-exit
 while :; do
   NEW_DIGEST=`conf watch`
   if [ "$DIGEST" != "$NEW_DIGEST" ]; then
