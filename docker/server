@@ -43,7 +43,7 @@ private
   end
 
   class Else
-    def initialize(cond) @cond end
+    def initialize(cond) @cond = cond end
     def else(&block) block.call unless @cond end
   end
 
@@ -114,7 +114,7 @@ private
           n["Tags"], n["Attrs"]["machine"], n["Attrs"]["node"]
         s.instance_eval &block
       end if backends
-      Else.new backends && !backends.empty?
+      Else.new(backends && !backends.empty?)
     end
   end
 
