@@ -43,7 +43,6 @@ while [ "$DIGEST" != '' ]; do
 done &
 WATCH_PID=$!
 trap "killtree $WATCH_PID" INT TERM
-echo $WATCH_PID
 if [ "$DIGEST" != '' ]; then
   echo "new $DST (digest=$DIGEST)"
   if $GANTRY_CHECK; then exec $GANTRY_START; fi

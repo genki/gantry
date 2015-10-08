@@ -28,7 +28,8 @@ tag:
 		| tail -n 1 | sed "s/Successfully built //"` \
 	V=`cat ./VERSION` \
 	awk 'BEGIN{ \
-		print "docker tag -f " ENVIRON["ID"] " s21g/gantry:" ENVIRON["V"] \
+		print "docker tag -f " ENVIRON["ID"] " s21g/gantry:" ENVIRON["V"]; \
+		print "docker tag -f " ENVIRON["ID"] " s21g/gantry:latest" \
 	}' | sh
 
 release: build version inc tag
