@@ -15,7 +15,8 @@ run: build
 version:
 	w3m https://hub.docker.com/r/s21g/gantry/tags/ \
 		| grep -E "\d+\.\d+.\d+\s+[0-9.]+\s+[KMG]B" \
-		| sort | tail -n 1 | grep -o -E "^\d+\.\d+\.\d+" > ./VERSION
+		| sort -t. -k 1,1n -k 2,2n -k 3,3n \
+		| tail -n 1 | grep -o -E "^\d+\.\d+\.\d+" > ./VERSION
 	cat ./VERSION
 
 inc:

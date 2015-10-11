@@ -27,7 +27,7 @@ class Gantry
   end
 
 private
-  def info(msg) puts "#{@hdr}: #{msg}" end
+  def info(msg) STDOUT.puts "#{@hdr}: #{msg}" end
   def load_cert(path) OpenSSL::X509::Certificate.new open(path).read end
   def load_key(path) OpenSSL::PKey.read open(path).read end
 
@@ -76,7 +76,7 @@ private
         end
       end
     end
-    ThreadsWait.new(*threads).next_wait
+    ThreadsWait.new(*threads).next_wait unless threads.empty?
     threads.each(&:exit).each(&:join)
     info "wait done"
   end
@@ -142,16 +142,16 @@ private
 end
 
 tcp = TCPServer.open 6479
-puts "gantry server started"
+STDOUT.puts "gantry server started"
 at_exit{tcp.close}
 Signal.trap(:INT){exit}
 loop do
   Thread.start tcp.accept do |s|
     begin
       hdr = s.addr[2]
-      puts "#{hdr} is connected"
+      STDOUT.puts "#{hdr} is connected"
       Gantry.new(s).start
-      puts "#{hdr} is disconnected"
+      STDOUT.puts "#{hdr} is disconnected"
     rescue Exception => e
       STDERR.puts "[E] #{hdr} #{e}\n#{e.backtrace*"\n"}"
     ensure

@@ -25,28 +25,29 @@ killtree(){
   local P=$1
   PIDS=`ps -o ppid,pid | awk 'NR>1{print}' | grep "^$P\b" | awk '{print $2}'`
   for I in $PIDS; do killtree $I; done
-  killsilent -QUIT $P
+  killsilent -TERM $P
 }
 DIGEST=`conf fetch`
 while [ "$DIGEST" != '' ]; do
   NEW_DIGEST=`conf watch`
-  if [ "$NEW_DIGEST" = '' ]; then killsilent -TERM $PID; exit 1; fi
-  if [ "$DIGEST" != "$NEW_DIGEST" ]; then
+  if [ "$NEW_DIGEST" = '' ]; then
+    echo gantry server down. retry...
+    sleep 3
+  elif [ "$DIGEST" != "$NEW_DIGEST" ]; then
     if $GANTRY_CHECK && $GANTRY_RELOAD; then
       DIGEST=$NEW_DIGEST
       echo "update $DST (digest=$DIGEST)"
     else
-      echo "failed to reload (digest=$NEW_DIGEST)"
-      DIGEST=''
+      echo "failed to reload (digest=$NEW_DIGEST) retry..."
+      sleep 3
     fi
   fi
 done &
 WATCH_PID=$!
-trap "killtree $WATCH_PID" INT TERM
 if [ "$DIGEST" != '' ]; then
   echo "new $DST (digest=$DIGEST)"
   if $GANTRY_CHECK; then exec $GANTRY_START; fi
-  killsilent -TERM $PID
+  killtree $WATCH_PID
 else
   echo "failed to start"
   exit 1
