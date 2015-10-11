@@ -2,7 +2,7 @@
 GANTRY_START=$@
 SRC=$GANTRY_TEMPLATE
 DST=$GANTRY_TARGET
-ADDR=`echo $GANTRY_PORT | awk -F'//' '{print $2}' | awk -F: '{print $1" "$2}'`
+ADDR=`echo $GANTRY_SERVER | awk -F: '{print $1" "$2}'`
 PID=$$
 
 conf(){
@@ -32,6 +32,7 @@ while [ "$DIGEST" != '' ]; do
   NEW_DIGEST=`conf watch`
   if [ "$NEW_DIGEST" = '' ]; then
     echo gantry server down. retry...
+    exit
     sleep 3
   elif [ "$DIGEST" != "$NEW_DIGEST" ]; then
     if $GANTRY_CHECK && $GANTRY_RELOAD; then
