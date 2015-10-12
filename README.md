@@ -44,8 +44,11 @@ foo
   serviers:
   <%- backend "service-name" do -%>
     <%- if node == 'n2' -%>
-    server: <%= ip %>:<%= port %>
+    server: <%= ip %>:<%= port %> <%= param "option" %>
     <%- end -%>
+  <%- end.else do -%>
+    no server
   <%- end -%>
-
 ```
+
+`param "option"` refers environment variable `GANTRY_OPTION`
