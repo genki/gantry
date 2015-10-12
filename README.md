@@ -26,8 +26,8 @@ docker run --name gantry --volumes-from etcd --link etcd \
 Then, run docker containers using with gantry like this:
 
 ```
-docker run --volumes-from gantry --link gantry \
-  --entrypoint /gantry/run \
+docker run -v /var/lib/gantry:/var/lib/gantry \
+  --entrypoint /var/lib/gantry/client' \
   -e GANTRY_TEMPLATE=/etc/foo/foo.conf.tmpl \
   -e GANTRY_TARGET=/etc/foo/foo.conf \
   <other options> <docker-image> \
