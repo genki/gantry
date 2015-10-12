@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+require "fileutils"
 require "socket"
 require "uri"
 require "net/https"
@@ -141,21 +142,25 @@ private
   end
 end
 
-tcp = TCPServer.open 6479
-STDOUT.puts "gantry server started"
-at_exit{tcp.close}
-Signal.trap(:INT){exit}
-loop do
-  Thread.start tcp.accept do |s|
-    begin
-      hdr = s.addr[2]
-      STDOUT.puts "#{hdr} is connected"
-      Gantry.new(s).start
-      STDOUT.puts "#{hdr} is disconnected"
-    rescue Exception => e
-      STDERR.puts "[E] #{hdr} #{e}\n#{e.backtrace*"\n"}"
-    ensure
-      s.close
+GANTRY_ROOT = ENV['GANTRY_ROOT'] || '/var/lib/gantry'
+GANTRY_SOCKET = File.join GANTRY_ROOT, 'socket'
+FileUtils.cp '/gantry/client', GANTRY_ROOT rescue nil
+FileUtils.rm_f GANTRY_SOCKET
+UNIXServer.open GANTRY_SOCKET do |unix|
+  STDOUT.puts "gantry server started"
+  at_exit{FileUtils.rm_f GANTRY_SOCKET}
+  Signal.trap(:INT){exit}
+  loop do
+    Thread.start unix.accept do |s|
+      begin
+        STDOUT.puts "connected"
+        Gantry.new(s).start
+        STDOUT.puts "disconnected"
+      rescue Exception => e
+        STDERR.puts "[E] #{e}\n#{e.backtrace*"\n"}"
+      ensure
+        s.close
+      end
     end
   end
 end

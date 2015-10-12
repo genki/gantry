@@ -2,7 +2,8 @@
 GANTRY_START=$@
 SRC=$GANTRY_TEMPLATE
 DST=$GANTRY_TARGET
-ADDR=`echo $GANTRY_SERVER | awk -F: '{print $1" "$2}'`
+SOCKET=${GANTRY_SOCKET:='/var/lib/gantry/socket'}
+NETCAT=${NETCAT:='nc -U'}
 PID=$$
 
 conf(){
@@ -13,7 +14,7 @@ conf(){
   awk -v nlines=$NLINES -v nparams=$NPARAMS -v arg=$1 '
     BEGIN{printf "%s %s %s\n", nlines, nparams, arg}
     {print $0}
-  ' | nc $ADDR | awk -v DST=$DST '
+  ' | $NETCAT $SOCKET | awk -v DST=$DST '
     NR==1{print}
     NR>=2{print > DST}
   '
@@ -32,7 +33,6 @@ while [ "$DIGEST" != '' ]; do
   NEW_DIGEST=`conf watch`
   if [ "$NEW_DIGEST" = '' ]; then
     echo gantry server down. retry...
-    exit
     sleep 3
   elif [ "$DIGEST" != "$NEW_DIGEST" ]; then
     if $GANTRY_CHECK && $GANTRY_RELOAD; then

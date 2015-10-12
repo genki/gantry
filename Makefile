@@ -3,9 +3,10 @@ build:
 		| tail -n 1 | sed "s/Successfully built //"` > ./CID
 
 run: build
-	docker run --rm -it -p 6479:6479 \
+	docker run --rm -it \
+		-v /gantry:/gantry \
 		--volumes-from etcd-g2 \
-		-e ETCD_ENDPOINT=https://192.168.10.2:2379 \
+		-e ETCD_ENDPOINT=https://192.168.10.3:2379 \
   	-e ETCD_CAFILE=/certs/ca.crt \
   	-e ETCD_CERTFILE=/certs/client.crt \
   	-e ETCD_KEYFILE=/certs/client.key.insecure \
