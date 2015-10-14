@@ -9,7 +9,176 @@ require "erb"
 require "digest/md5"
 require "thwait"
 
+module Etcd
+  def etcd
+    addr = URI(ENV['ETCD_ENDPOINT'])
+    c = Net::HTTP.new addr.host, addr.port
+  ensure
+    c.read_timeout = nil
+    c.use_ssl = true
+    c.ca_file = ENV['ETCD_CAFILE']
+    c.cert = load_cert ENV['ETCD_CERTFILE']
+    c.key = load_key ENV['ETCD_KEYFILE']
+    c.verify_mode = OpenSSL::SSL::VERIFY_PEER
+  end
+
+private
+  def load_cert(path) OpenSSL::X509::Certificate.new open(path).read end
+  def load_key(path) OpenSSL::PKey.read open(path).read end
+end
+
 class Gantry
+  include Etcd
+
+  class Watch
+    include Etcd
+
+    def self.start
+      Thread.start{new}
+    end
+
+    def initialize
+      @services = {}
+      listup.each{|c| add c['Id'] if c["Ports"]}
+      socket = UNIXSocket.new '/tmp/docker.sock'
+      get socket, '/events' do |chunk,i|
+        event chunk if i > 1
+      end
+    ensure
+      socket.close
+    end
+
+  private
+    def get(s, path, opts={}, chunk='', count=0, &block)
+      req = Net::HTTP::Get.new path, opts
+      req.exec s, '1.1', path
+      while line = s.gets
+        if line == "\r\n"
+          block[chunk, count += 1]
+          chunk = ''
+        else chunk << line
+        end
+      end
+    end
+
+    def listup
+      s = UNIXSocket.new '/tmp/docker.sock'
+      get s, '/containers/json', 'Connection' => 'Close' do |chunk,i|
+        next if i == 1
+        hdr,json,_ = chunk.split "\n"
+        return JSON.load json
+      end
+    ensure
+      s.close
+    end
+
+    def event(chunk)
+      id, json = chunk.split "\n", 2
+      msg = JSON.load json
+      case msg['status']
+      when 'start'; add msg['id']
+      when 'die'; rm msg['id']
+      when 'stop','kill'; rm msg['id']
+      end
+    rescue Exception => e
+      STDERR.puts "Invalid event: #{e} json=#{json}"
+    end
+
+    def get_attrs(c, attrs={})
+      env = c["Config"]["Env"]
+      env.grep %r{^SERVICE_([^=]*)=(.*?)$} do |k|
+        attrs[$1.tr 'A-Z_', 'a-z-'] = $2
+      end
+      attrs
+    end
+
+    def host_ip
+      addrs = Socket.getaddrinfo Socket.gethostname, 0, Socket::AF_INET
+      addrs.first[3]
+    end
+
+    BASE63_KEYS = 'abcdefghijklmnopqrstuvwxyz' +
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + '0123456789-'
+    def base63x_encode(blob)
+      num = blob.unpack('I*').inject &:*
+      out = BASE63_KEYS[num%52]
+      num /= 52
+      while num > 0
+        out = BASE63_KEYS[num%62] + out
+        num /= 62
+      end
+      out
+    end 
+
+    def each_entries(c, &block)
+      net = c["NetworkSettings"]
+      net_id = base63x_encode [net['NetworkID']].pack 'h*'
+      net["Ports"].each do |k,v|
+        src_port, proto = k.split '/', 2
+        next if v.nil?
+        v.each do |a|
+          ip = a["HostIp"]
+          ip = host_ip if ip == '0.0.0.0'
+          dst_port = a["HostPort"]
+          block[net_id, ip, src_port, dst_port, proto]
+        end
+      end
+    end
+
+    def add(cid)
+      return if @services[cid]
+      c = inspect cid
+      attrs = get_attrs c
+      name = attrs.delete 'name'
+      return unless name
+      STDOUT.puts "gantry add #{name} (#{cid[0...12]})"
+      tags = attrs.delete('tags') || ''
+      each_entries c do |net_id, ip, sp, dp, proto|
+        key = "#{net_id}-#{dp}"
+        value = {
+          'ID' => key,
+          'Name' => name,
+          'IP' => ip,
+          'Port' => dp,
+          'Tags' => tags.split(','),
+          'Attrs' => attrs
+        }
+        path = "/v2/keys/#{name}/#{proto}-#{sp}/#{key}"
+        req = Net::HTTP::Put.new path
+        req.form_data = {'value' => JSON.dump(value)}
+        etcd.request req
+      end
+      @services[cid] = c
+    rescue Exception => e
+      STDERR.puts "#{e.message}\n#{e.backtrace.join "\n"}"
+    end
+
+    def rm(cid)
+      return unless c = @services[cid]
+      return unless name = get_attrs(c)['name']
+      STDOUT.puts "gantry rm #{name} (#{cid[0...12]})"
+      each_entries c do |net_id, ip, sp, dp, proto|
+        key = "#{net_id}-#{dp}"
+        etcd.delete "/v2/keys/#{name}/#{proto}-#{sp}/#{key}"
+      end
+      @services.delete cid
+    rescue Exception => e
+      STDERR.puts "#{e.message}\n#{e.backtrace.join "\n"}"
+    end
+
+    def inspect(cid)
+      s = UNIXSocket.new '/tmp/docker.sock'
+      path = "/containers/#{cid}/json"
+      get s, path, "Connection" => "Close" do |chunk,i|
+        next if i == 1
+        hdr,json,_ = chunk.split "\n"
+        return JSON.load json
+      end
+    ensure
+      s.close
+    end
+  end
+
   def initialize(s)
     @socket = s
     @hdr = s.addr[2]
@@ -29,8 +198,6 @@ class Gantry
 
 private
   def info(msg) STDOUT.puts "#{@hdr}: #{msg}" end
-  def load_cert(path) OpenSSL::X509::Certificate.new open(path).read end
-  def load_key(path) OpenSSL::PKey.read open(path).read end
 
   def recv_tmpl
     nlines, nparams, @mode = @socket.gets.chomp.split ' ', 3
@@ -66,7 +233,7 @@ private
     threads = @backends.map do |name|
       Thread.new do
         begin
-          https.get "/v2/keys/#{name}?recursive=1&wait=1"
+          etcd.get "/v2/keys/#{name}?recursive=1&wait=1"
         rescue Timeout::Error => e
           info "[W] wait_etcd: #{e}. retry"
           sleep 1
@@ -86,7 +253,7 @@ private
     threads = @backends.map do |name|
       Thread.new do
         begin
-          res = https.get "/v2/keys/#{name}?sorted=1&recursive=1"
+          res = etcd.get "/v2/keys/#{name}?sorted=1&recursive=1"
           [name, res.body]
         rescue Exception => e
           info "[E] fetch_etcd: #{e}"
@@ -128,18 +295,6 @@ private
     @socket.puts Digest::MD5.hexdigest conf
     @socket.puts conf
   end
-
-  def https
-    etcd = URI(ENV['ETCD_ENDPOINT'])
-    c = Net::HTTP.new etcd.host, etcd.port
-  ensure
-    c.read_timeout = nil
-    c.use_ssl = true
-    c.ca_file = ENV['ETCD_CAFILE']
-    c.cert = load_cert ENV['ETCD_CERTFILE']
-    c.key = load_key ENV['ETCD_KEYFILE']
-    c.verify_mode = OpenSSL::SSL::VERIFY_PEER
-  end
 end
 
 GANTRY_ROOT = ENV['GANTRY_ROOT'] || '/var/lib/gantry'
@@ -150,6 +305,7 @@ UNIXServer.open GANTRY_SOCKET do |unix|
   STDOUT.puts "gantry server started"
   at_exit{FileUtils.rm_f GANTRY_SOCKET}
   Signal.trap(:INT){exit}
+  Gantry::Watch.start
   loop do
     Thread.start unix.accept do |s|
       begin
