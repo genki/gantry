@@ -77,6 +77,31 @@ module Gantry
       end
     ensure
       s.close
+      @mutex.synchronize{cleanup} if ENV['CLEANUP']
+    end
+    
+    def cleanup
+      log "gantry cleanup"
+      res = etcd.get "/v2/keys?recursive=1"
+      etcd_rm = ->(key) do
+        log "etcd rm #{key}"
+        etcd.delete "/v2/keys#{key}?recursive=1"
+      end
+      node = ->(n) do
+        if n["dir"]
+          n["nodes"].map{|i| node[i]}.inject(&:+).tap do |count|
+            etcd_rm[n["key"]] if count == 0
+          end
+        elsif (v = JSON.load n['value'] rescue nil)
+          if @services[v["ID"]]; 1
+          else etcd_rm[n["key"]]; 0
+          end
+        else etcd_rm[n["key"]]; 0
+        end
+      end
+      node[JSON.load(res.body)["node"]]
+    rescue Exception => e
+      err "Failed to cleanup #{e}"
     end
 
     def event(chunk)
@@ -158,15 +183,31 @@ module Gantry
       each_entries c do |net_id, ip, sp, dp, proto|
         key = "#{net_id}-#{dp}"
         value = {
-          'ID' => key,
+          'Key' => key,
+          'ID' => cid,
           'Name' => name,
           'IP' => ip,
           'Port' => dp,
           'Tags' => tags.split(','),
-          'Attrs' => attrs
+          'Attrs' => attrs,
         }
+        # add to etcd
         path = "/v2/keys/#{name}/#{proto}-#{sp}/#{key}"
         req = Net::HTTP::Put.new path
+        req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
+        etcd.request req
+        # add to skydns2
+        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node']]
+        path = "/v2/keys/skydns/local/skydns/" + names.compact.join('/')
+        req = Net::HTTP::Put.new path
+        value = {
+          'ID' => cid,
+          'host' => ip,
+          'port' => dp,
+        }
+        if priority = attrs['priority']
+          value['priority'] = priority
+        end
         req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
         etcd.request req
       end
@@ -177,11 +218,14 @@ module Gantry
 
     def rm(cid)
       return unless c = @services[cid]
-      return unless name = get_attrs(c)['name']
+      attrs = get_attrs c
+      return unless name = attrs.delete('name')
       log "gantry rm #{name} (#{cid[0...12]})"
       each_entries c do |net_id, ip, sp, dp, proto|
         key = "#{net_id}-#{dp}"
         etcd.delete "/v2/keys/#{name}/#{proto}-#{sp}/#{key}"
+        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node']]
+        etcd.delete "/v2/keys/skydns/local/skydns/" + names.compact.join('/')
       end
       @services.delete cid
     rescue Exception => e
