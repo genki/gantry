@@ -3,6 +3,8 @@ Gantry
 
 An etcd backed docker container loader with dynamic configuration.
 
+Official docker image is hosted on the docker hub: [s21g/gantry](https://hub.docker.com/r/s21g/gantry/)
+
 **Functions**
 
 * generates config files from templates when backend services changed.
@@ -10,13 +12,12 @@ An etcd backed docker container loader with dynamic configuration.
 * Now it has its own service registration (from v0.2)
 * Adds/removes entries also for Skydns2 (from v0.3)
 
-docker hub: [s21g/gantry](https://hub.docker.com/r/s21g/gantry/)
+**Prerequisites**:
 
-Prerequisites:
-
+ * docker
  * etcd cluster (with v2 API)
 
-USAGE:
+**USAGE**:
 
 Run gantry container for each docker host with options as follows:
 
@@ -60,3 +61,29 @@ foo
 ```
 
 `param "option"` refers environment variable `GANTRY_OPTION`
+
+Registration
+------------
+
+Gantry registers containers that have environment variable `SERVICE_NAME`
+in the etcd automatically.
+Environment variables such as `SERVICE_XXX` are stored as service param.
+Available variables are here:
+
+ * `SERVICE_NAME` it is used for etcd path prefix
+ * `SERVICE_MACHINE` you can refer it by `machine` in the template file
+ * `SERVICE_NODE` you can refer it by `name` in the template file
+ * `SERVICE_TAGS` comma separated tag list. You can refer it by `tags` as array in the template file
+ * `SERVICE_PRIORITY` priority number used for skydns record
+
+Services will be registered under the dir `/<service name>/<proto>-<port>`.
+
+For Skydns2
+-----------
+
+Gantry registers services also to skydns2 entries under `/skydns` on etcd.
+Typically, the path of entry forms like this.
+
+```
+/skydns/local/skydns/<service name>/<proto-port>/<machine>/<node>
+```

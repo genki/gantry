@@ -337,7 +337,8 @@ module Gantry
       log "all values are fetched"
     end
     
-    Service = Struct.new :key, :name, :ip, :port, :tags, :machine, :node
+    Service = Struct.new :key, :name, :ip, :port, :tags,
+      :machine, :node, :priority, :attrs
 
     class Generator
       def initialize(params, &block) @params, @block = params, block end
@@ -347,7 +348,8 @@ module Gantry
         backends = @block[name]
         backends.each do |n|
           s = Service.new n["ID"], n["Name"], n["IP"], n["Port"],
-            n["Tags"], n["Attrs"]["machine"], n["Attrs"]["node"]
+            n["Tags"], n["Attrs"]["machine"], n["Attrs"]["node"],
+            n["Attrs"]["priority"], n["Attrs"]
           s.instance_eval &block
         end if backends
         Else.new(backends && !backends.empty?)
