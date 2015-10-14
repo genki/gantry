@@ -142,14 +142,14 @@ module Gantry
       addrs.first[3]
     end
 
-    BASE63_KEYS = 'abcdefghijklmnopqrstuvwxyz' +
-      'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + '0123456789-'
-    def base63x_encode(blob)
-      num = blob.unpack('I*').inject &:*
-      out = BASE63_KEYS[num%52]
+    BASE62_KEYS = 'abcdefghijklmnopqrstuvwxyz' +
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + '0123456789'
+    def base62x_encode(blob)
+      num = blob.unpack('C*').inject{|s,i| s*256+i}
+      out = BASE62_KEYS[num%52]
       num /= 52
       while num > 0
-        out = BASE63_KEYS[num%62] + out
+        out = BASE62_KEYS[num%62] + out
         num /= 62
       end
       out
@@ -157,7 +157,7 @@ module Gantry
 
     def each_entries(c, &block)
       net = c["NetworkSettings"]
-      net_id = base63x_encode [net['NetworkID']].pack 'h*'
+      net_id = base62x_encode [net['NetworkID']].pack 'H*'
       net["Ports"].each do |k,v|
         src_port, proto = k.split '/', 2
         next if v.nil?
@@ -192,13 +192,14 @@ module Gantry
           'Tags' => tags.split(','),
           'Attrs' => attrs,
         }
+        path = "#{name}/#{proto}-#{sp}/#{key}"
+        log "+ #{path}"
         # add to etcd
-        path = "/v2/keys/#{name}/#{proto}-#{sp}/#{key}"
-        req = Net::HTTP::Put.new path
+        req = Net::HTTP::Put.new "/v2/keys/#{path}"
         req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
         etcd.request req
         # add to skydns2
-        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node']]
+        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node'], key]
         path = "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
         req = Net::HTTP::Put.new path
         value = {
@@ -224,8 +225,10 @@ module Gantry
       log "gantry rm #{name} (#{cid[0...12]})"
       each_entries c do |net_id, ip, sp, dp, proto|
         key = "#{net_id}-#{dp}"
-        etcd.delete "/v2/keys/#{name}/#{proto}-#{sp}/#{key}"
-        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node']]
+        path = "#{name}/#{proto}-#{sp}/#{key}"
+        log "- #{path}"
+        etcd.delete "/v2/keys/#{path}"
+        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node'], key]
         etcd.delete "/v2/keys/#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
       end
       @services.delete cid
