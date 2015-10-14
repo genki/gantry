@@ -85,5 +85,5 @@ Gantry registers services also to skydns2 entries under `/skydns` on etcd.
 Typically, the path of entry forms like this.
 
 ```
-/skydns/local/skydns/<service name>/<proto-port>/<machine>/<node>
+/skydns/local/skydns/<service name>/<proto>-<port>/<machine>/<node>
 ```
