@@ -9,46 +9,88 @@ require "erb"
 require "digest/md5"
 require "thwait"
 
-module Etcd
-  def etcd
-    addr = URI(ENV['ETCD_ENDPOINT'])
-    c = Net::HTTP.new addr.host, addr.port
-  ensure
-    c.read_timeout = nil
-    c.use_ssl = true
-    c.ca_file = ENV['ETCD_CAFILE']
-    c.cert = load_cert ENV['ETCD_CERTFILE']
-    c.key = load_key ENV['ETCD_KEYFILE']
-    c.verify_mode = OpenSSL::SSL::VERIFY_PEER
+module Gantry
+  module Etcd
+    def etcd
+      addr = URI(ENV['ETCD_ENDPOINT'])
+      c = Net::HTTP.new addr.host, addr.port
+    ensure
+      c.read_timeout = nil
+      c.use_ssl = true
+      c.ca_file = ENV['ETCD_CAFILE']
+      c.cert = load_cert ENV['ETCD_CERTFILE']
+      c.key = load_key ENV['ETCD_KEYFILE']
+      c.verify_mode = OpenSSL::SSL::VERIFY_PEER
+    end
+
+  private
+    def load_cert(path) OpenSSL::X509::Certificate.new open(path).read end
+    def load_key(path) OpenSSL::PKey.read open(path).read end
   end
 
-private
-  def load_cert(path) OpenSSL::X509::Certificate.new open(path).read end
-  def load_key(path) OpenSSL::PKey.read open(path).read end
-end
-
-class Gantry
-  include Etcd
+  module Logger
+    @@mutex = Mutex.new
+    def log(msg) @@mutex.synchronize{STDOUT.puts msg} end
+    def err(msg) @@mutex.synchronize{STDERR.puts msg} end
+  end
 
   class Watch
     include Etcd
+    include Logger
+
+    KEY_TTL     = (ENV['KEY_TTL'] || 60*60).to_i
+    REFRESH_TTL = (ENV['REFRESH_TTL'] || 30*60).to_i
 
     def self.start
       Thread.start{new}
     end
 
     def initialize
+      if KEY_TTL < REFRESH_TTL
+        raise 'KEY_TTL should be larger than REFRESH_TTL'
+      end
       @services = {}
-      listup.each{|c| add c['Id'] if c["Ports"]}
+      @mutex = Mutex.new
+      refresh
+      Thread.start{loop{sleep REFRESH_TTL; refresh}}
       socket = UNIXSocket.new '/tmp/docker.sock'
       get socket, '/events' do |chunk,i|
         event chunk if i > 1
       end
+    rescue Exception => e
+      STDERR.push "error: #{e} try to restart..."
+      retry
     ensure
       socket.close
     end
 
   private
+    def refresh
+      log "gantry refresh at #{Time.now}"
+      s = UNIXSocket.new '/tmp/docker.sock'
+      get s, '/containers/json', 'Connection' => 'Close' do |chunk,i|
+        next if i == 1
+        hdr,json,_ = chunk.split "\n"
+        return JSON.load(json).each do |c|
+          @mutex.synchronize{add c['Id']} if c["Ports"]
+        end
+      end
+    ensure
+      s.close
+    end
+
+    def event(chunk)
+      id, json = chunk.split "\n", 2
+      msg = JSON.load json
+      case msg['status']
+      when 'start'; @mutex.synchronize{add msg['id']}
+      when 'die'; @mutex.synchronize{rm msg['id']}
+      when 'stop','kill'; @mutex.synchronize{rm msg['id']}
+      end
+    rescue Exception => e
+      STDERR.puts "Invalid event: #{e} json=#{json}"
+    end
+
     def get(s, path, opts={}, chunk='', count=0, &block)
       req = Net::HTTP::Get.new path, opts
       req.exec s, '1.1', path
@@ -59,29 +101,6 @@ class Gantry
         else chunk << line
         end
       end
-    end
-
-    def listup
-      s = UNIXSocket.new '/tmp/docker.sock'
-      get s, '/containers/json', 'Connection' => 'Close' do |chunk,i|
-        next if i == 1
-        hdr,json,_ = chunk.split "\n"
-        return JSON.load json
-      end
-    ensure
-      s.close
-    end
-
-    def event(chunk)
-      id, json = chunk.split "\n", 2
-      msg = JSON.load json
-      case msg['status']
-      when 'start'; add msg['id']
-      when 'die'; rm msg['id']
-      when 'stop','kill'; rm msg['id']
-      end
-    rescue Exception => e
-      STDERR.puts "Invalid event: #{e} json=#{json}"
     end
 
     def get_attrs(c, attrs={})
@@ -126,12 +145,15 @@ class Gantry
     end
 
     def add(cid)
-      return if @services[cid]
+      c = @services[cid]
+      now = Time.now
+      return if c && now - c['GantryRefreshedAt'] < REFRESH_TTL
       c = inspect cid
+      c['GantryRefreshedAt'] = now
       attrs = get_attrs c
       name = attrs.delete 'name'
       return unless name
-      STDOUT.puts "gantry add #{name} (#{cid[0...12]})"
+      log "gantry add #{name} (#{cid[0...12]})"
       tags = attrs.delete('tags') || ''
       each_entries c do |net_id, ip, sp, dp, proto|
         key = "#{net_id}-#{dp}"
@@ -145,25 +167,25 @@ class Gantry
         }
         path = "/v2/keys/#{name}/#{proto}-#{sp}/#{key}"
         req = Net::HTTP::Put.new path
-        req.form_data = {'value' => JSON.dump(value)}
+        req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
         etcd.request req
       end
       @services[cid] = c
     rescue Exception => e
-      STDERR.puts "#{e.message}\n#{e.backtrace.join "\n"}"
+      err "#{e.message}\n#{e.backtrace.join "\n"}"
     end
 
     def rm(cid)
       return unless c = @services[cid]
       return unless name = get_attrs(c)['name']
-      STDOUT.puts "gantry rm #{name} (#{cid[0...12]})"
+      log "gantry rm #{name} (#{cid[0...12]})"
       each_entries c do |net_id, ip, sp, dp, proto|
         key = "#{net_id}-#{dp}"
         etcd.delete "/v2/keys/#{name}/#{proto}-#{sp}/#{key}"
       end
       @services.delete cid
     rescue Exception => e
-      STDERR.puts "#{e.message}\n#{e.backtrace.join "\n"}"
+      err "#{e.message}\n#{e.backtrace.join "\n"}"
     end
 
     def inspect(cid)
@@ -179,121 +201,123 @@ class Gantry
     end
   end
 
-  def initialize(s)
-    @socket = s
-    @hdr = s.addr[2]
-    @tmpl = ''
-    @backends = []
-    @values = {}
-    @params = {}
-  end
+  class Server
+    include Etcd
+    include Logger
 
-  def start
-    recv_tmpl
-    scan_backends
-    wait_etcd if @mode == 'watch'
-    fetch_etcd
-    gen_conf
-  end
-
-private
-  def info(msg) STDOUT.puts "#{@hdr}: #{msg}" end
-
-  def recv_tmpl
-    nlines, nparams, @mode = @socket.gets.chomp.split ' ', 3
-    info "#{nlines} line(s) #{nparams} param(s) #{@mode} mode"
-    nparams.to_i.times do
-      k,v = @socket.gets.chomp.split "=", 2
-      @params[k.sub(/^GANTRY_/, '').downcase] = v
+    def initialize(s)
+      @socket = s
+      @tmpl = ''
+      @backends = []
+      @values = {}
+      @params = {}
     end
-    nlines.to_i.times{@tmpl << @socket.gets}
-    info "received template"
-  end
 
-  class Else
-    def initialize(cond) @cond = cond end
-    def else(&block) block.call unless @cond end
-  end
-
-  class Scanner
-    def initialize(tmpl, params, &block)
-      @params, @block = params, block
-      ERB.new(tmpl,nil,'-').result binding
+    def start
+      recv_tmpl
+      scan_backends
+      wait_etcd if @mode == 'watch'
+      fetch_etcd
+      gen_conf
     end
-    def backend(name) @block[name]; Else.new true end
-    def param(key) @params[key] end
-  end
 
-  def scan_backends
-    Scanner.new(@tmpl, @params){|name| @backends << name}
-    info "found #{@backends.size} backend(s)"
-  end
+  private
+    def recv_tmpl
+      nlines, nparams, @mode = @socket.gets.chomp.split ' ', 3
+      log "#{nlines} line(s) #{nparams} param(s) #{@mode} mode"
+      nparams.to_i.times do
+        k,v = @socket.gets.chomp.split "=", 2
+        @params[k.sub(/^GANTRY_/, '').downcase] = v
+      end
+      nlines.to_i.times{@tmpl << @socket.gets}
+      log "received template"
+    end
 
-  def wait_etcd
-    threads = @backends.map do |name|
-      Thread.new do
-        begin
-          etcd.get "/v2/keys/#{name}?recursive=1&wait=1"
-        rescue Timeout::Error => e
-          info "[W] wait_etcd: #{e}. retry"
-          sleep 1
-          retry
-        rescue Exception => e
-          info "[E] wait_etcd: #{e}"
-          raise e
+    class Else
+      def initialize(cond) @cond = cond end
+      def else(&block) block.call unless @cond end
+    end
+
+    class Scanner
+      def initialize(tmpl, params, &block)
+        @params, @block = params, block
+        ERB.new(tmpl,nil,'-').result binding
+      end
+      def backend(name) @block[name]; Else.new true end
+      def param(key) @params[key] end
+    end
+
+    def scan_backends
+      Scanner.new(@tmpl, @params){|name| @backends << name}
+      log "found #{@backends.size} backend(s)"
+    end
+
+    def wait_etcd
+      threads = @backends.map do |name|
+        Thread.new do
+          begin
+            etcd.get "/v2/keys/#{name}?recursive=1&wait=1"
+          rescue Timeout::Error => e
+            log "[W] wait_etcd: #{e}. retry"
+            sleep 1
+            retry
+          rescue Exception => e
+            err "[E] wait_etcd: #{e}"
+            raise e
+          end
         end
       end
+      ThreadsWait.new(*threads).next_wait unless threads.empty?
+      threads.each(&:exit).each(&:join)
+      log "wait done"
     end
-    ThreadsWait.new(*threads).next_wait unless threads.empty?
-    threads.each(&:exit).each(&:join)
-    info "wait done"
-  end
 
-  def fetch_etcd
-    threads = @backends.map do |name|
-      Thread.new do
-        begin
-          res = etcd.get "/v2/keys/#{name}?sorted=1&recursive=1"
-          [name, res.body]
-        rescue Exception => e
-          info "[E] fetch_etcd: #{e}"
-          raise e
+    def fetch_etcd
+      threads = @backends.map do |name|
+        Thread.new do
+          begin
+            res = etcd.get "/v2/keys/#{name}?sorted=1&recursive=1"
+            [name, res.body]
+          rescue Exception => e
+            err "[E] fetch_etcd: #{e}"
+            raise e
+          end
         end
       end
+      threads.each &:join
+      threads.each do |t|
+        name, body = t.value
+        @values[name] = body
+      end
+      log "all values are fetched"
     end
-    threads.each &:join
-    threads.each do |t|
-      name, body = t.value
-      @values[name] = body
-    end
-    info "all values are fetched"
-  end
-  
-  Service = Struct.new :key, :name, :ip, :port, :tags, :machine, :node
+    
+    Service = Struct.new :key, :name, :ip, :port, :tags, :machine, :node
 
-  class Generator
-    def initialize(params, &block) @params, @block = params, block end
-    def run(tmpl) ERB.new(tmpl,nil,'-').result binding end
-    def param(key) @params[key] end
-    def backend(name, &block)
-      backends = @block[name]
-      backends.each do |n|
-        s = Service.new n["ID"], n["Name"], n["IP"], n["Port"],
-          n["Tags"], n["Attrs"]["machine"], n["Attrs"]["node"]
-        s.instance_eval &block
-      end if backends
-      Else.new(backends && !backends.empty?)
+    class Generator
+      def initialize(params, &block) @params, @block = params, block end
+      def run(tmpl) ERB.new(tmpl,nil,'-').result binding end
+      def param(key) @params[key] end
+      def backend(name, &block)
+        backends = @block[name]
+        backends.each do |n|
+          s = Service.new n["ID"], n["Name"], n["IP"], n["Port"],
+            n["Tags"], n["Attrs"]["machine"], n["Attrs"]["node"]
+          s.instance_eval &block
+        end if backends
+        Else.new(backends && !backends.empty?)
+      end
     end
-  end
 
-  def gen_conf
-    conf = Generator.new @params do |name|
-      values = JSON.load @values[name] rescue nil
-      nodes = values["node"]["nodes"] rescue nil
-      nodes.map{|node| JSON.load node["value"]} if nodes
-    end.run @tmpl
-    @socket.puts Digest::MD5.hexdigest conf
-    @socket.puts conf
+    def gen_conf
+      conf = Generator.new @params do |name|
+        values = JSON.load @values[name] rescue nil
+        nodes = values["node"]["nodes"] rescue nil
+        nodes.map{|node| JSON.load node["value"]} if nodes
+      end.run @tmpl
+      @socket.puts Digest::MD5.hexdigest conf
+      @socket.puts conf
+    end
   end
 end
 
@@ -305,12 +329,13 @@ UNIXServer.open GANTRY_SOCKET do |unix|
   STDOUT.puts "gantry server started"
   at_exit{FileUtils.rm_f GANTRY_SOCKET}
   Signal.trap(:INT){exit}
+  Signal.trap(:TERM){exit}
   Gantry::Watch.start
   loop do
     Thread.start unix.accept do |s|
       begin
         STDOUT.puts "connected"
-        Gantry.new(s).start
+        Gantry::Server.new(s).start
         STDOUT.puts "disconnected"
       rescue Exception => e
         STDERR.puts "[E] #{e}\n#{e.backtrace*"\n"}"
