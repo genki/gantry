@@ -22,10 +22,12 @@ Run gantry container for each docker host with options as follows:
 
 ```shell
 docker run --name gantry --volumes-from etcd --link etcd \
-  -e ETCD_ENDPOINT='https://etcd:2379' \
-  -e ETCD_CAFILE: '/certs/ca.crt' \
-  -e ETCD_CERTFILE: '/certs/client.crt' \
-  -e ETCD_KEYFILE: '/certs/client.key' \
+  -v /var/run/docker.sock:/tmp/docker.sock \
+  -v /var/lib/gantry:/var/lib/gantry \
+  -e ETCD_ENDPOINT=https://etcd:2379 \
+  -e ETCD_CAFILE=/certs/ca.crt \
+  -e ETCD_CERTFILE=/certs/client.crt \
+  -e ETCD_KEYFILE=/certs/client.key \
   s21g/gantry
 ```
 
@@ -33,7 +35,7 @@ Then, run docker containers using with gantry like this:
 
 ```
 docker run -v /var/lib/gantry:/var/lib/gantry \
-  --entrypoint /var/lib/gantry/client' \
+  --entrypoint /var/lib/gantry/client \
   -e GANTRY_TEMPLATE=/etc/foo/foo.conf.tmpl \
   -e GANTRY_TARGET=/etc/foo/foo.conf \
   <other options> <docker-image> \
