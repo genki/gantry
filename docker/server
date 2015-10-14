@@ -40,6 +40,7 @@ module Gantry
 
     KEY_TTL     = (ENV['KEY_TTL'] || 60*60).to_i
     REFRESH_TTL = (ENV['REFRESH_TTL'] || 30*60).to_i
+    SKYDNS_ROOT = (ENV['SKYDNS_ROOT'] || '/skydns/local')
 
     def self.start
       Thread.start{new}
@@ -198,12 +199,12 @@ module Gantry
         etcd.request req
         # add to skydns2
         names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node']]
-        path = "/v2/keys/skydns/local/skydns/" + names.compact.join('/')
+        path = "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
         req = Net::HTTP::Put.new path
         value = {
           'ID' => cid,
           'host' => ip,
-          'port' => dp,
+          'port' => dp.to_i,
         }
         if priority = attrs['priority']
           value['priority'] = priority
@@ -225,7 +226,7 @@ module Gantry
         key = "#{net_id}-#{dp}"
         etcd.delete "/v2/keys/#{name}/#{proto}-#{sp}/#{key}"
         names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node']]
-        etcd.delete "/v2/keys/skydns/local/skydns/" + names.compact.join('/')
+        etcd.delete "/v2/keys/#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
       end
       @services.delete cid
     rescue Exception => e
