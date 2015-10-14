@@ -3,12 +3,18 @@ Gantry
 
 An etcd backed docker container loader with dynamic configuration.
 
+**Functions**
+
+* generates config files from templates when backend services changed.
+* checks the config files and launches container process (as PID=1)
+* Now it has its own service registration (from v0.2)
+* Adds/removes entries also for Skydns2 (from v0.3)
+
 docker hub: [s21g/gantry](https://hub.docker.com/r/s21g/gantry/)
 
 Prerequisites:
 
- * etcd cluster
- * registrator
+ * etcd cluster (with v2 API)
 
 USAGE:
 
@@ -42,7 +48,7 @@ Because it uses ERB as the template engine, the tepmplate files are like this.
 ```erb
 foo
   serviers:
-  <%- backend "service-name" do -%>
+  <%- backend "service-name/tcp-1234" do -%>
     <%- if node == 'n2' -%>
     server: <%= ip %>:<%= port %> <%= param "option" %>
     <%- end -%>
