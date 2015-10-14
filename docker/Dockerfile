@@ -8,4 +8,4 @@ RUN mkdir -p /gantry
 WORKDIR /gantry
 COPY ./client ./server ./
 
-ENTRYPOINT /gantry/server
+ENTRYPOINT ["./server"]
