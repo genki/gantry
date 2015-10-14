@@ -3,7 +3,7 @@ build:
 		| tail -n 1 | sed "s/Successfully built //"` > ./CID
 
 run: build
-	docker run --rm -it --name gantry-dev \
+	docker run --rm -i --name gantry-dev \
 		-v /var/run/docker.sock:/tmp/docker.sock \
 		-v /etc/docker/certs.d:/certs:ro \
 		-v /var/lib/gantry:/var/lib/gantry \

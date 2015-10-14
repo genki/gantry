@@ -372,6 +372,8 @@ GANTRY_ROOT = ENV['GANTRY_ROOT'] || '/var/lib/gantry'
 GANTRY_SOCKET = File.join GANTRY_ROOT, 'socket'
 FileUtils.cp '/gantry/client', GANTRY_ROOT rescue nil
 FileUtils.rm_f GANTRY_SOCKET
+STDOUT.sync = true
+STDERR.sync = true
 UNIXServer.open GANTRY_SOCKET do |unix|
   STDOUT.puts "gantry server started"
   at_exit{FileUtils.rm_f GANTRY_SOCKET}
