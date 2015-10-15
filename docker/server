@@ -202,8 +202,9 @@ module Gantry
           'host' => ip,
           'port' => dp.to_i,
         }
-        if priority = attrs['priority']
-          value['priority'] = priority
+        %w[priority weight dns_text dns_ttl dns_group].each do |i|
+          k = i.sub /^dns_/, ''
+          value[k] = attrs[i] if attrs[i]
         end
         req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
         etcd.request req
@@ -335,8 +336,7 @@ module Gantry
       log "all values are fetched"
     end
     
-    Service = Struct.new :key, :name, :ip, :port, :tags,
-      :machine, :node, :priority, :attrs
+    Service = Struct.new *%i[key name ip port tags machine node attrs]
 
     class Generator
       def initialize(params, &block) @params, @block = params, block end
@@ -345,9 +345,9 @@ module Gantry
       def backend(name, &block)
         backends = @block[name]
         backends.each do |n|
+          attrs = n['Attrs']
           s = Service.new n["ID"], n["Name"], n["IP"], n["Port"],
-            n["Tags"], n["Attrs"]["machine"], n["Attrs"]["node"],
-            n["Attrs"]["priority"], n["Attrs"]
+            n["Tags"], attrs["machine"], attrs["node"], attrs
           s.instance_eval &block
         end if backends
         Else.new(backends && !backends.empty?)
