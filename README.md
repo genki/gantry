@@ -75,6 +75,10 @@ Available variables are here:
  * `SERVICE_NODE` you can refer it by `name` in the template file
  * `SERVICE_TAGS` comma separated tag list. You can refer it by `tags` as array in the template file
  * `SERVICE_PRIORITY` priority number used for skydns record
+ * `SERVICE_WEIGHT` weight number used for skydns record
+ * `SERVICE_DNS_TEXT` text used for skydns record
+ * `SERVICE_DNS_TTL` ttl used for skydns record
+ * `SERVICE_DNS_GROUP` group used for skydns record
 
 Services will be registered under the dir `/<service name>/<proto>-<port>`.
 
