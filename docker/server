@@ -202,8 +202,8 @@ module Gantry
           'host' => ip,
           'port' => dp.to_i,
         }
-        %w[priority weight dns_text dns_ttl dns_group].each do |i|
-          k = i.sub /^dns_/, ''
+        %w[priority weight dns-text dns-ttl dns-group].each do |i|
+          k = i.sub /^dns-/, ''
           value[k] = attrs[i] if attrs[i]
         end
         req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
