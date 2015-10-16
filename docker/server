@@ -24,7 +24,7 @@ module Gantry
       c.key = load_key ENV['ETCD_KEYFILE']
       c.verify_mode = OpenSSL::SSL::VERIFY_PEER
       block[c]
-    rescue Errno::ECONNREFUSED => e
+    rescue Errno::ECONNREFUSED, Errno::ECONNRESET, OpenSSL::SSL::SSLError => e
       err "failed to connect #{addr} (#{e}) retry..."
       index += 1
       if index >= @@mutex.synchronize{@@etcds.size}
