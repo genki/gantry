@@ -11,21 +11,40 @@ require "thwait"
 
 module Gantry
   module Etcd
-    def etcd
-      addr = URI(ENV['ETCD_ENDPOINT'])
+    @@etcds = [ENV['ETCD_ENDPOINT']]
+    @@mutex = Mutex.new
+
+    def etcd(index = 0, &block)
+      addr = @@mutex.synchronize{URI(@@etcds[index % @@etcds.size])}
       c = Net::HTTP.new addr.host, addr.port
-    ensure
       c.read_timeout = nil
       c.use_ssl = true
       c.ca_file = ENV['ETCD_CAFILE']
       c.cert = load_cert ENV['ETCD_CERTFILE']
       c.key = load_key ENV['ETCD_KEYFILE']
       c.verify_mode = OpenSSL::SSL::VERIFY_PEER
+      block[c]
+    rescue Errno::ECONNREFUSED => e
+      err "failed to connect #{addr} (#{e}) retry..."
+      index += 1
+      if index >= @@mutex.synchronize{@@etcds.size}
+        index = 0
+        sleep 5
+      end
+      retry
     end
 
   private
     def load_cert(path) OpenSSL::X509::Certificate.new open(path).read end
     def load_key(path) OpenSSL::PKey.read open(path).read end
+
+    def sync_etcds
+      log "gantry sync etcds"
+      cluster = JSON.load etcd{|c| c.get '/v2/members'}.body
+      urls = cluster["members"].map{|m| m["clientURLs"]}.flatten.uniq
+      @@mutex.synchronize{@@etcds = urls.shuffle}
+      log "gantry found etcds: #{@@etcds.join(',')}"
+    end
   end
 
   module Logger
@@ -38,9 +57,10 @@ module Gantry
     include Etcd
     include Logger
 
-    KEY_TTL     = (ENV['KEY_TTL'] || 60*60).to_i
-    REFRESH_TTL = (ENV['REFRESH_TTL'] || 30*60).to_i
-    SKYDNS_ROOT = (ENV['SKYDNS_ROOT'] || '/skydns/local')
+    KEY_TTL       = (ENV['KEY_TTL'] || 60*60).to_i
+    REFRESH_TTL   = (ENV['REFRESH_TTL'] || 30*60).to_i
+    ETCD_SYNC_TTL = (ENV['ETCD_SYNC_TTL'] || 5*60).to_i
+    SKYDNS_ROOT   = (ENV['SKYDNS_ROOT'] || '/skydns/local')
 
     def self.start
       Thread.start{new}
@@ -52,7 +72,9 @@ module Gantry
       end
       @services = {}
       @mutex = Mutex.new
+      sync_etcds
       refresh
+      Thread.start{loop{sleep ETCD_SYNC_TTL; sync_etcds}}
       Thread.start{loop{sleep REFRESH_TTL; refresh}}
       socket = UNIXSocket.new '/tmp/docker.sock'
       get socket, '/events' do |chunk,i|
@@ -83,10 +105,10 @@ module Gantry
     
     def cleanup
       log "gantry cleanup"
-      res = etcd.get "/v2/keys?recursive=1"
+      res = etcd{|c| c.get "/v2/keys?recursive=1"}
       etcd_rm = ->(key) do
         log "etcd rm #{key}"
-        etcd.delete "/v2/keys#{key}?recursive=1"
+        etcd{|c| c.delete "/v2/keys#{key}?recursive=1"}
       end
       node = ->(n) do
         if n["dir"]
@@ -192,7 +214,7 @@ module Gantry
         # add to etcd
         req = Net::HTTP::Put.new "/v2/keys/#{path}"
         req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
-        etcd.request req
+        etcd{|c| c.request req}
         # add to skydns2
         names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node'], key]
         path = "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
@@ -207,7 +229,7 @@ module Gantry
           value[k] = attrs[i] if attrs[i]
         end
         req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
-        etcd.request req
+        etcd{|c| c.request req}
       end
       @services[cid] = c
     rescue Exception => e
@@ -223,9 +245,10 @@ module Gantry
         key = "#{net_id}-#{dp}"
         path = "#{name}/#{proto}-#{sp}/#{key}"
         log "- #{path}"
-        etcd.delete "/v2/keys/#{path}"
+        etcd{|c| c.delete "/v2/keys/#{path}"}
         names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node'], key]
-        etcd.delete "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
+        path = "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
+        etcd{|c| c.delete path}
       end
       @services.delete cid
     rescue Exception => e
@@ -300,7 +323,7 @@ module Gantry
       threads = @backends.map do |name|
         Thread.new do
           begin
-            etcd.get "/v2/keys/#{name}?recursive=1&wait=1"
+            etcd{|c| c.get "/v2/keys/#{name}?recursive=1&wait=1"}
           rescue Timeout::Error => e
             log "[W] wait_etcd: #{e}. retry"
             sleep 1
@@ -320,7 +343,7 @@ module Gantry
       threads = @backends.map do |name|
         Thread.new do
           begin
-            res = etcd.get "/v2/keys/#{name}?sorted=1&recursive=1"
+            res = etcd{|c| c.get "/v2/keys/#{name}?sorted=1&recursive=1"}
             [name, res.body]
           rescue Exception => e
             err "[E] fetch_etcd: #{e}"
