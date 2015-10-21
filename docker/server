@@ -179,10 +179,10 @@ module Gantry
         src_port, proto = k.split '/', 2
         next if v.nil?
         v.each do |a|
-          hip, cip = a["HostIp"], net['IPAddress']
-          hip = net['Gateway'] if hip == '0.0.0.0'
+          ip = a["HostIp"]
+          ip = net['Gateway'] if ip == '0.0.0.0'
           dst_port = a["HostPort"]
-          block[net_id, hip, cip, src_port, dst_port, proto]
+          block[net_id, ip, src_port, dst_port, proto]
         end
       end
     end
@@ -198,13 +198,13 @@ module Gantry
       return unless name
       log "gantry add #{name} (#{cid[0...12]})"
       tags = attrs.delete('tags') || ''
-      each_entries c do |net_id, hip, cip, sp, dp, proto|
+      each_entries c do |net_id, ip, sp, dp, proto|
         key = "#{net_id}-#{dp}"
         value = {
           'Key' => key,
           'ID' => cid,
           'Name' => name,
-          'IP' => hip,
+          'IP' => ip,
           'Port' => dp,
           'Tags' => tags.split(','),
           'Attrs' => attrs,
@@ -221,8 +221,8 @@ module Gantry
         req = Net::HTTP::Put.new path
         value = {
           'ID' => cid,
-          'host' => cip,
-          'port' => sp.to_i,
+          'host' => ip,
+          'port' => dp.to_i,
         }
         %w[priority weight dns-text dns-ttl dns-group].each do |i|
           k = i.sub /^dns-/, ''
@@ -241,7 +241,7 @@ module Gantry
       attrs = get_attrs c
       return unless name = attrs.delete('name')
       log "gantry rm #{name} (#{cid[0...12]})"
-      each_entries c do |net_id, hip, cip, sp, dp, proto|
+      each_entries c do |net_id, ip, sp, dp, proto|
         key = "#{net_id}-#{dp}"
         path = "#{name}/#{proto}-#{sp}/#{key}"
         log "- #{path}"
