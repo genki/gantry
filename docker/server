@@ -180,8 +180,12 @@ module Gantry
         next if v.nil?
         v.each do |a|
           ip = a["HostIp"]
-          ip = net['Gateway'] if ip == '0.0.0.0'
-          dst_port = a["HostPort"]
+          if ip == '0.0.0.0'
+            ip = net['IPAddress']
+            dst_port = src_port
+          else
+            dst_port = a["HostPort"]
+          end
           block[net_id, ip, src_port, dst_port, proto]
         end
       end
