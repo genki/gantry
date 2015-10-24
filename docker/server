@@ -11,7 +11,7 @@ require "thwait"
 
 module Gantry
   module Etcd
-    @@etcds = [ENV['ETCD_ENDPOINT']]
+    @@etcds = ENV['ETCD_ENDPOINT'].split ','
     @@mutex = Mutex.new
 
     def etcd(index = 0, &block)
