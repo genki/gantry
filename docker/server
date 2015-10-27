@@ -216,7 +216,7 @@ module Gantry
         req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
         etcd{|c| c.request req}
         # add to skydns2
-        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node'], key]
+        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node'], dp]
         path = "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
         req = Net::HTTP::Put.new path
         value = {
