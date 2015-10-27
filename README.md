@@ -5,6 +5,8 @@ An etcd backed docker container loader with dynamic configuration.
 
 Official docker image is hosted on the docker hub: [s21g/gantry](https://hub.docker.com/r/s21g/gantry/)
 
+[![Docker Repository on Quay.io](https://quay.io/repository/s21g/gantry/status "Docker Repository on Quay.io")](https://quay.io/repository/s21g/gantry)
+
 **Functions**
 
 * generates config files from templates when backend services changed.
