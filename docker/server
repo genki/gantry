@@ -246,7 +246,7 @@ module Gantry
         path = "#{name}/#{proto}-#{sp}/#{key}"
         log "- #{path}"
         etcd{|c| c.delete "/v2/keys/#{path}"}
-        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node'], key]
+        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node'], dp]
         path = "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
         etcd{|c| c.delete path}
       end
