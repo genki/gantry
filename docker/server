@@ -209,17 +209,18 @@ module Gantry
           'Tags' => tags.split(','),
           'Attrs' => attrs,
         }
-        path = "#{name}/#{proto}-#{sp}/#{key}"
-        log "+ #{path}"
         # add to etcd
-        req = Net::HTTP::Put.new "/v2/keys/#{path}"
+        path = "/#{name}/#{proto}-#{sp}/#{key}"
+        log "+ #{path}"
+        req = Net::HTTP::Put.new "/v2/keys#{path}"
         req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
         etcd{|c| c.request req}
         # add to skydns2
         names = [name, "#{proto}-#{sp}",
           attrs['machine'], attrs['node'], attrs['index'], dp]
-        path = "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
-        req = Net::HTTP::Put.new path
+        path = "#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
+        log "+ #{path}"
+        req = Net::HTTP::Put.new "/v2/keys#{path}"
         value = {
           'ID' => cid,
           'host' => ip,
@@ -244,13 +245,14 @@ module Gantry
       log "gantry rm #{name} (#{cid[0...12]})"
       each_entries c do |net_id, ip, sp, dp, proto|
         key = "#{net_id}-#{dp}"
-        path = "#{name}/#{proto}-#{sp}/#{key}"
+        path = "/#{name}/#{proto}-#{sp}/#{key}"
         log "- #{path}"
-        etcd{|c| c.delete "/v2/keys/#{path}"}
+        etcd{|c| c.delete "/v2/keys#{path}"}
         names = [name, "#{proto}-#{sp}",
           attrs['machine'], attrs['node'], attrs['index'], dp]
-        path = "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
-        etcd{|c| c.delete path}
+        path = "#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
+        log "- #{path}"
+        etcd{|c| c.delete "/v2/keys#{path}"}
       end
       @services.delete cid
     rescue Exception => e
@@ -361,7 +363,7 @@ module Gantry
       log "all values are fetched"
     end
     
-    Service = Struct.new *%i[key name ip port tags machine node attrs]
+    Service = Struct.new *%i[key name ip port tags machine node index attrs]
 
     class Generator
       def initialize(params, &block) @params, @block = params, block end
@@ -372,7 +374,7 @@ module Gantry
         backends.each do |n|
           attrs = n['Attrs']
           s = Service.new n["ID"], n["Name"], n["IP"], n["Port"],
-            n["Tags"], attrs["machine"], attrs["node"], attrs
+            n["Tags"], attrs["machine"], attrs["node"], attrs["index"], attrs
           s.instance_eval &block
         end if backends
         Else.new(backends && !backends.empty?)

@@ -75,6 +75,7 @@ Available variables are here:
  * `SERVICE_NAME` it is used for etcd path prefix
  * `SERVICE_MACHINE` you can refer it by `machine` in the template file
  * `SERVICE_NODE` you can refer it by `name` in the template file
+ * `SERVICE_INDEX` you can refer it by `index` in the template file
  * `SERVICE_TAGS` comma separated tag list. You can refer it by `tags` as array in the template file
  * `SERVICE_PRIORITY` priority number used for skydns record
  * `SERVICE_WEIGHT` weight number used for skydns record
@@ -82,7 +83,7 @@ Available variables are here:
  * `SERVICE_DNS_TTL` ttl used for skydns record
  * `SERVICE_DNS_GROUP` group used for skydns record
 
-Services will be registered under the dir `/<service name>/<proto>-<port>`.
+Services will be registered under the dir `/<service name>/<proto>-<src-port>`.
 
 For Skydns2
 -----------
@@ -91,5 +92,5 @@ Gantry registers services also to skydns2 entries under `/skydns` on etcd.
 Typically, the path of entry forms like this.
 
 ```
-/skydns/local/skydns/<service name>/<proto>-<port>/<machine>/<node>
+/skydns/local/skydns/<service name>/<proto>-<src-port>/<machine>/<node>/<index>/<dst-port>
 ```
