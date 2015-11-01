@@ -94,3 +94,5 @@ Typically, the path of entry forms like this.
 ```
 /skydns/local/skydns/<service name>/<proto>-<src-port>/<machine>/<node>/<index>/<dst-port>
 ```
+
+Blank items will be omitted.
