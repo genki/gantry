@@ -216,7 +216,8 @@ module Gantry
         req.form_data = {'value' => JSON.dump(value), 'ttl' => KEY_TTL}
         etcd{|c| c.request req}
         # add to skydns2
-        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node'], dp]
+        names = [name, "#{proto}-#{sp}",
+          attrs['machine'], attrs['node'], attrs['index'], dp]
         path = "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
         req = Net::HTTP::Put.new path
         value = {
@@ -246,7 +247,8 @@ module Gantry
         path = "#{name}/#{proto}-#{sp}/#{key}"
         log "- #{path}"
         etcd{|c| c.delete "/v2/keys/#{path}"}
-        names = [name, "#{proto}-#{sp}", attrs['machine'], attrs['node'], dp]
+        names = [name, "#{proto}-#{sp}",
+          attrs['machine'], attrs['node'], attrs['index'], dp]
         path = "/v2/keys#{SKYDNS_ROOT}/skydns/" + names.compact.join('/')
         etcd{|c| c.delete path}
       end
