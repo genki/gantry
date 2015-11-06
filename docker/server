@@ -174,7 +174,9 @@ module Gantry
 
     def each_entries(c, &block)
       net = c["NetworkSettings"]
-      net_id = base62x_encode [net['NetworkID']].pack 'H*'
+      # for migration from 1.8 to 1.9
+      nid = net["EndpointID"] || net["NetworkID"]
+      net_id = base62x_encode [nid].pack 'H*'
       net["Ports"].each do |k,v|
         src_port, proto = k.split '/', 2
         next if v.nil?
