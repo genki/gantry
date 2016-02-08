@@ -316,7 +316,7 @@ module Gantry
         @params, @block = params, block
         ERB.new(tmpl,nil,'-').result binding
       end
-      def backend(name) @block[name]; Else.new true end
+      def backend(name,*args) @block[name]; Else.new true end
       def param(key) @params[key] end
     end
 
