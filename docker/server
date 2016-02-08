@@ -372,12 +372,11 @@ module Gantry
       def run(tmpl) ERB.new(tmpl,nil,'-').result binding end
       def param(key) @params[key] end
       def backend(name, filter = {}, &block)
-        backends = (@block[name] || []).select do |n|
+        backends = (@block[name] || []).map do |n|
           attrs = n['Attrs']
-          s = Service.new n["ID"], n["Name"], n["IP"], n["Port"],
+          Service.new n["ID"], n["Name"], n["IP"], n["Port"],
             n["Tags"], attrs["machine"], attrs["node"], attrs["index"], attrs
-          filter.all?{|k,v| v === s[k]}
-        end
+        end.select{|s| filter.all?{|k,v| v === s[k]}}
         backends.each &block
         Else.new !backends.empty?
       end
