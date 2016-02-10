@@ -53,10 +53,8 @@ Because it uses ERB as the template engine, the tepmplate files are like this.
 ```erb
 foo
   serviers:
-  <%- backend "service-name/tcp-1234" do -%>
-    <%- if node == 'n2' -%>
-    server: <%= ip %>:<%= port %> <%= param "option" %>
-    <%- end -%>
+  <%- backend "service-name/tcp-1234", node:param("node") do |s| -%>
+    server: <%= s.ip %>:<%= s.port %> <%= param "option" %>
   <%- end.else do -%>
     no server
   <%- end -%>
